@@ -291,20 +291,29 @@ def plot_input_correlation_heatmap(
     figsize: tuple[int, int] = (10, 8),
     save_path: str = "data/processed/input_correlation_heatmap.png",
 ) -> None:
-    """Zeigt eine Korrelations-Heatmap für numerische Input-Features."""
+    """Zeigt eine Korrelations-Heatmap für Input-Features.
+
+    Kategorische Features wie "Product ID" und "Type" werden vor der
+    Korrelationsberechnung als Zahlen kodiert.
+    """
     if columns is None:
         columns = [
             name
             for name, info in FEATURE_METADATA.items()
-            if info.role == "input" and pd.api.types.is_numeric_dtype(df[name])
+            if info.role == "input"
         ]
 
     columns = [col for col in columns if col in df.columns]
     if len(columns) < 2:
-        print("  ⚠️  Nicht genügend numerische Input-Features für Korrelationsanalyse.")
+        print("  ⚠️  Nicht genügend Input-Features für Korrelationsanalyse.")
         return
 
-    corr_matrix = df[columns].corr()
+    corr_df = df[columns].copy()
+    for col in columns:
+        if not pd.api.types.is_numeric_dtype(corr_df[col]):
+            corr_df[col] = pd.Categorical(corr_df[col]).codes
+
+    corr_matrix = corr_df.corr()
 
     fig, ax = plt.subplots(figsize=figsize)
     cax = ax.matshow(corr_matrix, cmap="coolwarm", vmin=-1, vmax=1)
@@ -321,7 +330,7 @@ def plot_input_correlation_heatmap(
             text = ax.text(j, i, f"{corr_matrix.iloc[i, j]:.2f}",
                            ha="center", va="center", color="black", fontsize=10)
 
-    plt.title("Korrelations-Heatmap der numerischen Input-Features", fontsize=14, pad=20)
+    plt.title("Korrelations-Heatmap der Input-Features (inkl. kodierter Kategorien)", fontsize=14, pad=20)
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"  Korrelations-Heatmap gespeichert: {save_path}")
@@ -424,6 +433,68 @@ def plot_input_vs_target_distributions(
     fig.suptitle(f"Verteilung der Input-Features vs. {target_col}", fontsize=14, y=0.99)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"  Input vs. Target-Verteilungen gespeichert: {save_path}")
+    plt.show()
+
+
+def plot_input_target_correlations(
+    df: pd.DataFrame,
+    target_col: str = "Machine failure",
+    columns: list[str] | None = None,
+    figsize: tuple[int, int] = (10, 6),
+    save_path: str = "data/processed/input_target_correlations.png",
+) -> None:
+    """Zeigt die Korrelation aller Input-Features mit der Zielvariable."""
+    if columns is None:
+        columns = [
+            name
+            for name, info in FEATURE_METADATA.items()
+            if info.role == "input"
+        ]
+
+    columns = [col for col in columns if col in df.columns]
+    if target_col not in df.columns:
+        print(f"  ⚠️  Zielspalte '{target_col}' nicht gefunden.")
+        return
+
+    if not columns:
+        print("  ⚠️  Keine Input-Features für die Korrelationsanalyse gefunden.")
+        return
+
+    corr_df = df[columns + [target_col]].copy()
+    for col in columns + [target_col]:
+        if not pd.api.types.is_numeric_dtype(corr_df[col]):
+            corr_df[col] = pd.Categorical(corr_df[col]).codes
+
+    corr_with_target = corr_df.corr()[target_col].drop(target_col)
+    corr_with_target = corr_with_target.reindex(
+        corr_with_target.abs().sort_values(ascending=False).index
+    )
+
+    print("\nKorrelationswerte mit Machine failure:")
+    for feature, value in corr_with_target.items():
+        print(f"  {feature:<25}: {value:.4f}")
+
+    plot_height = max(figsize[1], 0.8 * len(corr_with_target))
+    fig, ax = plt.subplots(figsize=(figsize[0], plot_height))
+    y_pos = list(range(len(corr_with_target)))
+    ax.barh(y_pos, corr_with_target.values, color="#4C9BE8")
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(corr_with_target.index)
+    ax.invert_yaxis()
+    ax.set_xlabel("Korrelationskoeffizient")
+    ax.set_title(f"Korrelation aller Input-Features mit {target_col}")
+    ax.grid(True, axis="x", alpha=0.3)
+
+    for i, value in enumerate(corr_with_target.values):
+        ax.text(value + (0.01 if value >= 0 else -0.01), i, f"{value:.2f}",
+                va="center",
+                ha="left" if value >= 0 else "right",
+                color="black",
+                fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"  Input-Target-Korrelationsgrafik gespeichert: {save_path}")
     plt.show()
 
 
@@ -575,6 +646,7 @@ if __name__ == "__main__":
     plot_input_correlation_heatmap(df)
     plot_input_vs_target_boxplots(df)
     plot_input_vs_target_distributions(df)
+    plot_input_target_correlations(df)
     plot_high_correlation_scatterplots(df)
     print()
     summarize_target(df)
